@@ -1,6 +1,7 @@
 package Filter::HereDocIndent;
 use strict;
 use Filter::Util::Call;
+# use Debug::ShowStuff ':all';
 use re 'taint';
 use vars qw($VERSION $debug);
 
@@ -8,7 +9,7 @@ use vars qw($VERSION $debug);
 
 
 # version
-$VERSION = '0.90';
+$VERSION = '0.91';
 
 # constants
 use constant REG => 1;
@@ -17,10 +18,10 @@ use constant POD => 3; # reserved for later improvement
 
 
 #------------------------------------------------------------------
-# import routine: returns the filter object
-# 
-sub import {
-	my ($class, %opts) = @_ ;
+# new
+#
+sub new {
+	my ($class, %opts) = @_;
 	my $self = bless({}, $class);
 	
 	# default INDENT_CONTENT
@@ -30,22 +31,81 @@ sub import {
 	# default state
 	$self->{'state'} = REG;
 	
-	# add to filters
-	filter_add($self);
+	# return object
+	return $self;
 }
-# 
-# import routine: returns the filter object
+#
+# new
 #------------------------------------------------------------------
 
 
 #------------------------------------------------------------------
-# filter: this sub is run for every line in the calling routine
-# 
+# import routine: creates filter object and adds it
+# to the filters array
+#
+sub import {
+	my ($class, %opts) = @_;
+	
+	# add filter if set to do so
+	if ( defined($opts{'filter_add'}) ? $opts{'filter_add'} : 1 ) {
+		filter_add($class->new(%opts));
+	}
+}
+#
+# import routine
+#------------------------------------------------------------------
+
+
+#------------------------------------------------------------------
+# filter: this sub is run for every line in the calling script
+#
 sub filter {
 	my $self = shift;
 	my $status = filter_read() ;
 	my $line = $_;
+	
+	($status, $line) = $self->process_line($status, $line);
+	
+	# set line and return value
+	$_= $line;
+	$status;
+}
+#
+# filter
+#------------------------------------------------------------------
 
+
+
+#------------------------------------------------------------------
+# filter_block
+#
+sub filter_block {
+	my ($self, $block) = @_;
+	my (@lines, $status);
+	
+	# parse block into lines
+	@lines = split("\n", $block);
+	
+	# loop through lines
+	LINE_LOOP:
+	foreach my $line (@lines) {
+		($status, $line) = $self->process_line(1, "$line\n");
+	}
+	
+	# return
+	return join('', @lines);
+}
+#
+# filter_block
+#------------------------------------------------------------------
+
+
+
+#------------------------------------------------------------------
+# process_line
+#
+sub process_line {
+	my ($self, $status, $line) = @_;
 	
 	# if we're at the end of the file
 	if (! $status) {
@@ -81,7 +141,27 @@ sub filter {
 	# else in regular code
 	else {
 		# if this line starts a heredoc
-		if ($line =~ m/^[^'"]*<<\s*('[^']+'|"[^"]+"|\w+)\s*;\s*/s) {
+		if ($line =~ m/
+			^              # start of line
+			[^#]*          # anything except a comment marker
+			<<
+			\s*
+			
+			(
+				'[^']+'
+				|
+				"[^"]+"
+				|
+				\w+
+			)
+			
+			[^'"]*
+			;
+			\s*
+			
+			/sx
+			) {
+			
 			$self->{'del'} = $1;
 			$self->{'del'} =~ s|^'(.*)'$|$1| or $self->{'del'} =~ s|^"(.*)"$|$1|;
 			$self->{'del_regex'} = quotemeta($self->{'del'});
@@ -94,13 +174,11 @@ sub filter {
 	# for debugging this module
 	print STDERR $line if $debug;
 	
-	$_= $line;
-	$status;
+	return ($status, $line);
 }
-# 
-# filter: this sub is run for every line in the calling routine
+#
+# process_line
 #------------------------------------------------------------------
-
 
 
 
@@ -115,8 +193,9 @@ Filter::HereDocIndent - Indent here documents
 
 =head1 SYNOPSIS
 
-use Filter::HereDocIndent;
+ use Filter::HereDocIndent;
 
+ # an indented block with an indented here doc
  if ($sometest) {
          print <<'(MYDOC)';
          Melody
@@ -131,6 +210,8 @@ outputs (with text beginning at start of line):
  Starflower
  Miko
 
+HereDocIndent mimics the planned behavior of here documents in Perl 6.
+
 =head1 INSTALLATION
 
 Filter::HereDocIndent can be installed with the usual routine:
@@ -139,9 +220,6 @@ Filter::HereDocIndent can be installed with the usual routine:
 	make
 	make test
 	make install
-
-You can also just copy HereDocIndent.pm into the Filter/ directory of one of
-your library trees.
 
 =head1 DEPENDENCIES
 
@@ -177,20 +255,21 @@ characters removed, thereby outputting the content at the beginning of the line:
  Miko
 
 If a line is indented more than the closing delimiter, it will be indented by
-the extra amount in the results.  For example, this code:
+the extra amount in the results.  For example, this code (+ is used to indicate
+spaces):
 
  if ($sometest) {
-         print <<'(MYDOC)';
-         Melody
-            Starflower
-         Miko
-         (MYDOC)
+ ++++++++print <<'(MYDOC)';
+ ++++++++Melody
+ +++++++++++Starflower
+ ++++++++Miko
+ ++++++++(MYDOC)
  }
 
 produces this output:
 
  Melody
-    Starflower
+ ***Starflower
  Miko
 
 HereDocIndent does not distinguish between different types of whitespace.  If
@@ -199,7 +278,7 @@ spaces, each line of content will lose just one space character.  The best
 practice is to be consistent in how you indent, using just tabs or just spaces.
 
 HereDocIndent will only remove leading whitespace.  If one of the lines of
-content is not indented, the non-whitespace characters will I<not> be removed.
+content is not indented, the non-whitespace characters will B<not> be removed.
 The trailing newline is never removed.
 
 =head2 INDENT_CONTENT
@@ -221,18 +300,17 @@ most popular format) then your code will compile just fine.
 
 The format recognized by HereDocIndent is a single print statement or variable
 assignment, followed by C<E<lt>E<lt>>, then a quoted string or unquoted string
-of word characters, then a semicolon, then the end of line.  Here are a few 
+of word characters, then a semicolon, then the end of line.  Here are a few
 examples that would be parsed properly by HereDocIndent:
 
  print << '(MYDOC)';
  print << "MYDOC";
  my $var = <<EOT;
  push @arr, <<  '(MYDOC)';
-
-
-Here are a few examples that would I<not> be recognized by HereDocIndent:
-
  mysub (<<'MYDOC');
+
+Here are a few examples that would B<not> be recognized by HereDocIndent:
+
  push @arr, <<'MYDOC', 'foo';
  print <<'MYDOC', "------\n";
 
@@ -241,6 +319,50 @@ unintended problems if you put text in your POD that looks like a here doc.
 This issue will need to be fixed in a later release.  HereDocIndent also does
 not recognize if an entire line is inside quotes from another line, or even
 inside a here doc that it didn't recognize.
+
+COMPARISON TO OTHER HEREDOC INDENTATION TECHNIQUES
+
+There are several other here doc indentation techniques,
+particularly those discussed in the Perl FAQ.  Those
+techniques generally have several shortcomings.
+
+First, they require you to modify how you create the here
+doc.  Instead of simply creating the here doc as you usually
+would, except that it is indented, you have to pass the
+entire string into a function of through a regex to modify
+it.
+
+Second, they usually require that the ending delimiter is
+still flush against the left margin.  It should be noted
+that this shortcoming can be overcome by creating the
+heredoc delimiter with padded spaces in the left.  However,
+even that technique requires you to ensure that the here
+doc declaration and the actual delimiter have matching
+amounts of padded space... something I personally find
+to be a distasteful extra drain on my brain resources.
+HereDocIndent allows you to simply create a delimeter
+and use it as usual.
+
+Finally, many techniques either produce a string with
+padded spaces in the left margin, or force a function to
+guess how many spaces it should remove.  With
+HereDocIndent, that information is cleanly and
+unambiguously determined by the indentation of the
+delimiter.
+
+HereDocIndent mimics the planned behavior of here docs
+in Perl 6.
+
+BUGS AND OTHER ISSUES
+
+There have been some problems where commented out code that includes
+here docs causes a compiler crash.  If your code won't compile check
+if any commented out code uses here docs.  Usually to work around the
+problem I just put a space between the two <'s.
+
+HereDocIndent changes the number of lines in your document, so when you
+get an error that includes the line number of your code, you might find that
+that actual problematic code is a few lines away from that line number.
 
 =head1 TERMS AND CONDITIONS
 
@@ -262,19 +384,15 @@ F<miko@idocs.com>
 
 Initial release
 
+=item Version 0.91    November 8, 2010
+
+Modified to fit the situation where the heredoc is an argument in a call to a
+function.
+
+Minor edits to documentation.
+
 =back
 
-=begin cpan
-
--------------------------------------------
-Version 0.90
-
-registered:  Aug 6, 2002
-uploaded:    
-announced:   
-
-=end cpan
 
 
 =cut
-
