@@ -1,5 +1,10 @@
-HereDocIndent.pm
-Makefile.PL
 MANIFEST
+Changes
+META.yml
+Makefile.PL
 README
-test.pl
+Build.PL
+LICENSE
+t/test.t
+lib/Filter/HereDocIndent.pm
+lib/Filter/HereDocIndent.pod
